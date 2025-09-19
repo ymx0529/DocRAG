@@ -1,0 +1,2 @@
+不同数据集的OCR结果保存至chache文件夹下，建图所需的json文件被额外复制到cache文件夹外
+OCR结果与PDF命名相同
