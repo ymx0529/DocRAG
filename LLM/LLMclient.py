@@ -7,13 +7,15 @@ class ChatModel:
     def __init__(self, 
                  model: str, 
                  reasoning_model: bool,
-                 api_key: str | None, 
-                 base_url: str | None
+                 api_key: str | None,  
+                 base_url: str | None, 
+                 temperature: float | None
                  ):
         self.model = model
         self.reasoning_model = reasoning_model
         self.api_key = api_key or "ollama"
         self.base_url = base_url or "http://localhost:11434/v1/"
+        self.temperature = temperature or 1.0
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
     
     def _encode_image_to_base64(self, image_path):
@@ -37,7 +39,8 @@ class ChatModel:
             try:
                 completion = self.client.chat.completions.create(
                     messages=input_messages,
-                    model=self.model
+                    model=self.model,
+                    temperature=self.temperature
                 )
                 think_result = completion.choices[-1].message.content
                 result = re.sub(r'<think>.*?</think>\s*', '', think_result, flags=re.DOTALL | re.IGNORECASE)
@@ -53,7 +56,8 @@ class ChatModel:
             try:
                 completion = self.client.chat.completions.create(
                     messages=input_messages,
-                    model=self.model
+                    model=self.model,
+                    temperature=self.temperature
                 )
                 result = completion.choices[-1].message.content
                 return result
@@ -79,7 +83,8 @@ class ChatModel:
         try:
             completion = self.client.chat.completions.create(
                 messages=input_messages,
-                model=self.model
+                model=self.model,
+                temperature=self.temperature
                 )
             result = completion.choices[-1].message.content
             return result
