@@ -3,3 +3,12 @@
 /Dataset/MMLongBench-Doc
 /Generation/Output
 /GraphCache/TAT-DQA
+Database/__pycache__
+DocProcess/__pycache__
+EntityExtraction/__pycache__
+Generation/__pycache__
+GraphProcess/__pycache__
+LLM/__pycache__
+Logs/__pycache__
+PromptTune/__pycache__
+Retrieval/__pycache__

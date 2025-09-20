@@ -116,4 +116,4 @@ def multimodal_generator(query: str,
             print(f"多模态生成答案保存失败：{e}")
             logging.error(f"多模态生成答案保存失败：{e}")
     
-    return response
+    return prompt, image_list, response
