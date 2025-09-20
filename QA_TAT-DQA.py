@@ -17,7 +17,6 @@ from Generation.Generator import multimodal_generator
 from Generation.LLMJudge import judge_answer, score_answer
 from Logs.LoggerUtil import get_logger
 
-
 ############################################# 系统配置 ###############################################
 # 指定显卡
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -76,7 +75,6 @@ os.makedirs(os.path.dirname(rag_dir), exist_ok=True)
 judge_dir = os.path.join("Generation/Output", f"{dataset_name}_judge.csv")
 
 ######################################################################################################
-
 # 指定 QA json 文件路径。不同的数据集，需要指定不同的 json 文件路径和不同的处理方式。
 json_path = './Dataset/tatdqa_dataset_test_gold.json'
 with open(json_path, 'r', encoding='utf-8') as f:
@@ -201,8 +199,7 @@ for pdf_name, qa_list in doc_qa_dict.items():
                                                             chunks=chunks, 
                                                             chatVLM=chatVLM, 
                                                             ocr_imagefile_dir=Path(ocr_imagefile_dir), 
-                                                            save_dir=output_dir)
-        
+                                                            save_dir=output_dataset_dir)
         qa_data = {"query": query, 
                    "prompt": prompt, 
                    "image": image_list, 
@@ -239,12 +236,6 @@ for pdf_name, qa_list in doc_qa_dict.items():
         score_sum += score_value
 
         results_df.loc[len(results_df)] = [question, answer, response, judgment, score]
-
-    # 保存结果到 CSV 文件
-    results_df.to_csv(judge_dir, index=False, encoding="utf-8-sig")
-    # 循环结束后，将所有 data 写入 JSON 文件
-    with open(rag_dir, "w", encoding="utf-8") as f:
-        json.dump(qa_data_list, f, ensure_ascii=False, indent=2)
 
 # 计算准确率和平均得分
 accuracy = correct_count / total_count
