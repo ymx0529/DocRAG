@@ -3,12 +3,12 @@
 /Dataset/MMLongBench-Doc
 /Generation/Output
 /GraphCache/TAT-DQA
-Database/__pycache__
-DocProcess/__pycache__
-EntityExtraction/__pycache__
-Generation/__pycache__
-GraphProcess/__pycache__
-LLM/__pycache__
-Logs/__pycache__
-PromptTune/__pycache__
-Retrieval/__pycache__
+__pycache__/
+*.pyc
+
+# 忽略 Logs 下的所有文件
+Logs/*
+# 但别忽略目录本身（否则下面的反忽略不会生效）
+!Logs/
+# 在 Logs 下保留一个文件
+!Logs/LoggerUtil.py

@@ -9,13 +9,13 @@ class ChatModel:
                  reasoning_model: bool,
                  api_key: str | None,  
                  base_url: str | None, 
-                 temperature: float | None
+                 temperature: float=1.0
                  ):
         self.model = model
         self.reasoning_model = reasoning_model
         self.api_key = api_key or "ollama"
         self.base_url = base_url or "http://localhost:11434/v1/"
-        self.temperature = temperature or 1.0
+        self.temperature = temperature
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
     
     def _encode_image_to_base64(self, image_path):
