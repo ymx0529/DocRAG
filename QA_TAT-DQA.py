@@ -13,6 +13,7 @@ from Database.nebula import NebulaHandler
 from Retrieval.ChunkRetriever import get_related_entities
 from Retrieval.ChunkRetriever import chunk_loader
 from Retrieval.RelevanceScore import chunk_score
+from Retrieval.SystemParameter import get_system_parameter, extract_weights
 from Generation.Generator import multimodal_generator
 from Generation.LLMJudge import judge_answer, score_answer
 from Logs.LoggerUtil import get_logger
@@ -43,12 +44,12 @@ chatLLM = ChatModel(model=model,
                     reasoning_model=reasoning_model, 
                     api_key=api_key, 
                     base_url=base_url, 
-                    temperature=0.0)
+                    temperature=1.0)
 chatVLM = ChatModel(model=vl_model, 
                     reasoning_model=False, 
                     api_key=api_key, 
                     base_url=base_url,
-                    temperature=0.0)
+                    temperature=1.0)
 encoder = SentenceTransformer(embedding_model)
 
 # 初始化向量数据库和图数据库工具
@@ -170,25 +171,35 @@ for pdf_name, qa_list in doc_qa_dict.items():
         # 获取与问题最相似的实体
         results_matched = get_related_entities(entity_id=search_results, graph_data=final_graph)
 
-        # 4.在子图中，计算每个 chunk 的排名 score(c)
-        scores_text, scores_multimodal = chunk_score(query=query, 
-                                                        graph_data=results_matched, 
-                                                        pagerank=pagerank, 
-                                                        closeness=closeness, 
-                                                        encoder_model=encoder, 
-                                                        alpha=1.0, 
-                                                        beta=1.0, 
-                                                        gamma=1.0, 
-                                                        delta=1.0, 
-                                                        lam=0.5)
+        # 调用 LLM 分析问题，并建议权重参数
+        rag_parameters = get_system_parameter(model=model, 
+                                              reasoning_model=reasoning_model, 
+                                              query=query, 
+                                              api_key=api_key, 
+                                              base_url=base_url)
+        # 从 LLM 响应中提取权重参数
+        parameters = extract_weights(rag_parameters)
+        alpha = parameters.get("alpha")
+        beta = parameters.get("beta")
+        lam = parameters.get("lam")
 
-        # 5.根据 score，选出 top_k 个 chunk
+        # 在子图中，计算每个 chunk 的排名 score(c)
+        scores_text, scores_multimodal = chunk_score(query=query, 
+                                                     graph_data=results_matched, 
+                                                     pagerank=pagerank, 
+                                                     closeness=closeness, 
+                                                     encoder_model=encoder, 
+                                                     alpha=alpha, 
+                                                     beta=beta, 
+                                                     lam=lam)
+
+        # 根据 score，选出 top_k 个 chunk
         chunks = chunk_loader(ocr_json_path=Path(ocr_dir), 
-                                pdf_name=pdf_name,
-                                scores_text=scores_text, 
-                                scores_multimodal=scores_multimodal, 
-                                top_k_text=5,
-                                top_k_multimodal=3)
+                              pdf_name=pdf_name, 
+                              scores_text=scores_text, 
+                              scores_multimodal=scores_multimodal, 
+                              top_k_text=5, 
+                              top_k_multimodal=3)
         '''
         生成回答以及提取关键信息
         '''
@@ -222,12 +233,12 @@ for pdf_name, qa_list in doc_qa_dict.items():
         total_count += 1
         # 回答得分计算
         score = score_answer(model=model, 
-                                reasoning_model=reasoning_model,
-                                question=question,
-                                reference_answer=answer,
-                                response=response,
-                                api_key=api_key,
-                                base_url=base_url)
+                             reasoning_model=reasoning_model, 
+                             question=question, 
+                             reference_answer=answer, 
+                             response=response, 
+                             api_key=api_key, 
+                             base_url=base_url)
         print(score)
         try:
             score_value = float(score)
