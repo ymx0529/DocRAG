@@ -65,7 +65,7 @@ joint.setup(embedding_dim=encoder.get_sentence_embedding_dimension())
 dataset_name = "TAT-DQA"
 
 # OCR 结果输出路径
-ocr_dir = os.path.join(f"Dataset/{dataset_name}")
+ocr_dir = os.path.join(f"/home/hdd/MRAG/Dataset/{dataset_name}")
 # RAG 结果输出目录
 output_dir = os.path.join(f"Generation/Output")
 output_dataset_dir = os.path.join(f"Generation/Output/{dataset_name}")
@@ -77,7 +77,7 @@ judge_dir = os.path.join("Generation/Output", f"{dataset_name}_judge.csv")
 
 ######################################################################################################
 # 指定 QA json 文件路径。不同的数据集，需要指定不同的 json 文件路径和不同的处理方式。
-json_path = './Dataset/tatdqa_dataset_test_gold.json'
+json_path = '/home/hdd/MRAG/Dataset/tatdqa_dataset_test_gold.json'
 with open(json_path, 'r', encoding='utf-8') as f:
     data = json.load(f)
 # 提取所有 question 和 answer
