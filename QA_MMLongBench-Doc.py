@@ -114,13 +114,21 @@ for pdf_name, qa_list in doc_qa_dict.items():
     # pdf_name = "4cbc46fc4b5a4a86cbe15ef28007d948"
     # qa_list = doc_qa_dict[pdf_name]
 
-    json_path = f"/home/yuanxy/Experiment_yxy/GraphCache/{dataset_name}/FinalGraph/{pdf_name}_final_graph.json"
-    with open(json_path, 'r', encoding='utf-8') as f:
+    json_path_1 = f"/home/yuanxy/Experiment_yxy/GraphCache/{dataset_name}/FinalGraph/{pdf_name}_final_graph.json"
+    json_path_2 = f"/home/yuanxy/Experiment_yxy/GraphCache/{dataset_name}/FinalGraph/{pdf_name}_final_graph_with_vector.json"
+
+    # 检查两个文件是否都存在
+    if not (os.path.exists(json_path_1) and os.path.exists(json_path_2)):
+        print(f"⚠️ 跳过文档 {pdf_name}，原因：{json_path_1} 或 {json_path_2} 不存在")
+        continue
+
+    # 加载第一个 JSON
+    with open(json_path_1, 'r', encoding='utf-8') as f:
         final_graph = json.load(f)
     print(f"--- 知识图谱载入，共包含 {len(final_graph)} 个元素 ---")
 
-    json_path = f"/home/yuanxy/Experiment_yxy/GraphCache/{dataset_name}/FinalGraph/{pdf_name}_final_graph_with_vector.json"
-    with open(json_path, 'r', encoding='utf-8') as f:
+    # 加载第二个 JSON
+    with open(json_path_2, 'r', encoding='utf-8') as f:
         final_graph_with_vectors = json.load(f)
     print(f"当前文档：{pdf_name} ---")
     print(f"--- 知识图谱载入，共包含 {len(final_graph_with_vectors)} 个元素 ---")
@@ -201,8 +209,8 @@ for pdf_name, qa_list in doc_qa_dict.items():
                               pdf_name=pdf_name, 
                               scores_text=scores_text, 
                               scores_multimodal=scores_multimodal, 
-                              top_k_text=5, 
-                              top_k_multimodal=3)
+                              top_k_text=10, 
+                              top_k_multimodal=6)
         '''
         生成回答以及提取关键信息
         '''
