@@ -209,8 +209,8 @@ for pdf_name, qa_list in doc_qa_dict.items():
                               pdf_name=pdf_name, 
                               scores_text=scores_text, 
                               scores_multimodal=scores_multimodal, 
-                              top_k_text=10, 
-                              top_k_multimodal=6)
+                              top_k_text=7, 
+                              top_k_multimodal=5)
         '''
         生成回答以及提取关键信息
         '''
