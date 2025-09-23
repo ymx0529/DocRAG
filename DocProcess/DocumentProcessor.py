@@ -88,26 +88,31 @@ def parsed_document_process(pdf_name: str,
         print("{} 文档加载成功，共加载了 {} 页".format(latest_file, len(pages)))
         logging.info("{} 文档加载成功，共加载了 {} 页".format(latest_file, len(pages)))
 
-        # 提取首页和前三页的 "text" 字段的内容，list[str]
+                # 提取第一个非空页和前三个非空页的 "text" 字段内容
         text_list_1stPage = []
         text_list_3Page = []
-        for page_num, items in sorted(pages.items()):
-            text_list_page = [item["text"] for item in items if "text" in item]
-            if page_num == 0: 
-                text_list_1stPage.extend(text_list_page)
-            if page_num > 2:
-                break
-            text_list_3Page.extend(text_list_page)
-            # 第一页的文本内容
 
-        if not text_list_1stPage:
-            print("首页没有可处理的文本内容")
-            logging.error("首页没有可处理的文本内容")
+        non_empty_pages = []  # 保存非空页的内容
+        for page_num, items in sorted(pages.items()):
+            text_list_page = [item["text"] for item in items if "text" in item and item["text"].strip()]
+            if text_list_page:  # 非空才加入
+                non_empty_pages.append((page_num, text_list_page))
+
+        # 取第一个非空页
+        if non_empty_pages:
+            text_list_1stPage = non_empty_pages[0][1]
+        else:
+            logging.error("文档没有任何可处理的文本内容")
             return []
+
+        # 取前三个非空页
+        for _, page_content in non_empty_pages[:3]:
+            text_list_3Page.extend(page_content)
+
         if not text_list_3Page:
-            print("前三页没有可处理的文本内容")
-            logging.error("前三页没有可处理的文本内容")
+            logging.error("前三个非空页没有可处理的文本内容")
             return []
+
 
         # 用前三页内容，提取 领域 语言，并为LLM设定系统角色
         domain = generate_domain(chat_model=chatLLM, docs=text_list_3Page)
@@ -169,7 +174,7 @@ def parsed_document_process(pdf_name: str,
                         extraction_result = entity_relationship_extraction(chat_model=chatLLM, 
                                                                            persona=persona, 
                                                                            extract_prompt=prompt, 
-                                                                           max_retries=5)
+                                                                           max_retries=10)
                         # 2.如果抽取成功，给每个都附上 ID，成为段落级子图
                         if extraction_result:
                             text_triplet = create_id_and_embedding(extraction_result, 
