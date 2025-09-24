@@ -203,46 +203,52 @@ def parsed_document_process(pdf_name: str,
                         if merged_text:
                             # 标题和脚注不为空，生成三元组
                             prompt = prompt_concatenate(prompt=prompt_template, docs=merged_text)
-                            extraction_result = entity_relationship_extraction(chat_model=chatLLM, 
-                                                                               persona=persona, 
-                                                                               extract_prompt=prompt, 
-                                                                               max_retries=5)
+                            extraction_result = entity_relationship_extraction(chat_model=chatLLM,
+                                                                                persona=persona,
+                                                                                extract_prompt=prompt,
+                                                                                max_retries=5)
                             if extraction_result:
                                 # 附上 ID 成为图片三元组
-                                image_triplet = create_id_and_embedding(extraction_result, 
+                                image_triplet = create_id_and_embedding(extraction_result,
                                                                         page_idx, segment_idx, encoder)
                             else:
                                 logging.error(f"page {page_idx} paragraph {segment_idx} 实体关系抽取失败")
                                 print(f"page {page_idx} paragraph {segment_idx} 实体关系抽取失败")
-                        # 2.处理原图 节点
-                        image_node = creat_image_node(chatVLM, image_file_dir, img_path, item_type, 
-                                                      merged_text, page_idx, segment_idx, encoder)
-                        # 3.处理原图节点 与 image 段落三元组 边
-                        if image_triplet:
-                            image_edge = creat_image_edges(image_node, image_triplet)
+
+                        # 2.处理原图 节点 —— 跳过空路径
+                        if img_path:
+                            image_node = creat_image_node(chatVLM, image_file_dir, img_path, item_type,
+                                                        merged_text, page_idx, segment_idx, encoder)
+
+                            # 3.处理原图节点 与 image 段落三元组 边
+                            if image_triplet:
+                                image_edge = creat_image_edges(image_node, image_triplet)
+
                         # 最终的图片段落的子图
                         subgraph_seg.extend(image_triplet)
                         subgraph_seg.extend(image_node)
                         subgraph_seg.extend(image_edge)
+
 
                     elif item_type == 'equation':
                         # 处理 equation 类型
                         img_path = item.get('img_path', '')
                         text = item.get('text', '')
                         page_idx = item.get('page_idx', '')
-                        
+
                         equation_text_node = []
                         equation_image_node = []
                         # 1.处理公式的文本内容
                         if text:
                             equation_text_node = creat_equation_node(text, page_idx, segment_idx, encoder)
-                        # 2.处理公式的原图节点
+                        # 2.处理公式的原图节点 —— 跳过空路径
                         if img_path:
-                            equation_image_node = creat_image_node(chatVLM, image_file_dir, img_path, item_type, 
-                                                                   text, page_idx, segment_idx, encoder)
+                            equation_image_node = creat_image_node(chatVLM, image_file_dir, img_path, item_type,
+                                                                text, page_idx, segment_idx, encoder)
                         # 3.合并子图
                         subgraph_seg.extend(equation_text_node)
                         subgraph_seg.extend(equation_image_node)
+
 
                     elif item_type == 'table':
                         # 处理 table 类型
@@ -264,34 +270,32 @@ def parsed_document_process(pdf_name: str,
                         if isinstance(table_footnote, list):
                             merged_text += table_footnote
                         if merged_text:
-                            # 标题和脚注不为空，生成三元组
                             prompt = prompt_concatenate(prompt=prompt_template, docs=merged_text)
-                            extraction_result = entity_relationship_extraction(chat_model=chatLLM, 
-                                                                               persona=persona, 
-                                                                               extract_prompt=prompt, 
-                                                                               max_retries=5)
+                            extraction_result = entity_relationship_extraction(chat_model=chatLLM,
+                                                                                persona=persona,
+                                                                                extract_prompt=prompt,
+                                                                                max_retries=5)
                             if extraction_result:
-                                # 附上 ID 成为 表格标题脚注 段落三元组
-                                table_triplet = create_id_and_embedding(extraction_result, 
+                                table_triplet = create_id_and_embedding(extraction_result,
                                                                         page_idx, segment_idx, encoder)
                             else:
                                 logging.error(f"page {page_idx} paragraph {segment_idx} 实体关系抽取失败")
                                 print(f"page {page_idx} paragraph {segment_idx} 实体关系抽取失败")
                         # 2.处理表格文本内容
                         if table_body:
-                            table_text_node = creat_table_node(table_body, 
-                                                               page_idx, segment_idx, encoder)
-                        # 3.处理表格原图 节点
+                            table_text_node = creat_table_node(table_body,
+                                                            page_idx, segment_idx, encoder)
+                        # 3.处理表格原图 节点 —— 跳过空路径
                         if img_path:
-                            table_image_node = creat_image_node(chatVLM, image_file_dir, img_path, item_type, 
+                            table_image_node = creat_image_node(chatVLM, image_file_dir, img_path, item_type,
                                                                 merged_text, page_idx, segment_idx, encoder)
+                            # 4.处理原图节点 与 表格标题脚注 段落三元组 边
+                            if table_triplet:
+                                table_edge1 = creat_image_edges(table_image_node, table_triplet)
+                            # 5.处理原图节点 与 表格文本内容 三元组 边
+                            if table_text_node:
+                                table_edge2 = creat_image_edges(table_image_node, table_text_node)
 
-                        # 4.处理原图节点 与 表格标题脚注 段落三元组 边
-                        if table_triplet:
-                            table_edge1 = creat_image_edges(table_image_node, table_triplet)
-                        # 5.处理原图节点 与 表格文本内容 三元组 边
-                        if table_text_node:
-                            table_edge2 = creat_image_edges(table_image_node, table_text_node)
                         # 6.合并表格段落的子图
                         subgraph_seg.extend(table_triplet)
                         subgraph_seg.extend(table_text_node)
