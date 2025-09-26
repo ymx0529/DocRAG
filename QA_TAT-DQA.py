@@ -126,7 +126,7 @@ for pdf_name, qa_list in doc_qa_dict.items():
     #joint.ingest_graph_data(final_graph_with_vectors)
     # 使用批量写入
     joint.ingest_graph_data_bulk(
-        final_graph_with_vectors,
+        final_graph,
         entity_batch=500,    # 每批最多 500 个实体
         relation_batch=800,  # 每批最多 800 条关系
         reset=True          # 如果 True 会清空并重建 space

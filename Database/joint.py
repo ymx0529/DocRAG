@@ -33,7 +33,7 @@ class JointHandler:
         初始化数据库环境（仅保证 schema 存在，不清空数据）
         """
         # Nebula 只保证 schema 存在
-        #self.nebula.create_schema()
+        self.nebula.create_schema()
 
         # Milvus collection 初始化
         self.milvus.create_collection(name=self.milvus.collection_name, dim=embedding_dim)

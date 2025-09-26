@@ -88,15 +88,19 @@ class MilvusHandler:
         return int(self.collection.num_entities)
 
     def search(self, vector: List[float], top_k: int = 3, partition_names: Optional[List[str]] = None) -> List[str]:
-        self.collection.load(partition_names=partition_names)
-        print(f"[Milvus] Searching (dim={len(vector)}) top_k={top_k} partitions={partition_names or 'ALL'}")
+        cleaned_partition_names = None
+        if partition_names:
+            # 对列表中的每一个名字都执行净化操作
+            cleaned_partition_names = [re.sub(r'[^0-9a-zA-Z_]', '_', name) for name in partition_names]
+        self.collection.load(partition_names=cleaned_partition_names)
+        print(f"[Milvus] Searching (dim={len(vector)}) top_k={top_k} partitions={cleaned_partition_names or 'ALL'}")
         results = self.collection.search(
             data=[vector],
             anns_field="vector",
             param={"metric_type": "L2", "params": {"nprobe": 10}},
             limit=top_k,
             output_fields=["entityID"],
-            partition_names=partition_names
+            partition_names=cleaned_partition_names
         )
         # results[0] 为第一个查询向量的 hits
         hits = [hit.entity.get("entityID") for hit in results[0]]

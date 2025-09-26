@@ -55,17 +55,24 @@ class NebulaHandler:
             raise RuntimeError(f"Nebula nGQL failed: {nGQL}\n{res.error_msg()}")
         return res """
     
-    def _exec(self, nGQL: str, retries: int = 5, retry_interval: float = 1.0):
+    def _exec(self, nGQL: str, retries: int = 20, retry_interval: float = 1.0):
         for attempt in range(retries):
-            res = self.session.execute(nGQL)
-            if res.error_code() == ttypes.ErrorCode.SUCCEEDED:
-                return res
-            #  修复这里：用 str 判断，而不是 bytes
-            if "Not the leader" in res.error_msg():
-                print(f"[WARN] Not the leader, 第 {attempt+1} 次重试 ...")
-                time.sleep(retry_interval)
-                continue
-            raise RuntimeError(f"Nebula nGQL failed: {nGQL}\n{res.error_msg()}")
+            try:
+                # 尝试执行 nGQL 查询
+                res = self.session.execute(nGQL)
+                if res.error_code() == ttypes.ErrorCode.SUCCEEDED:
+                    return res
+                if "Not the leader" in res.error_msg():
+                    print(f"[WARN] Not the leader, 第 {attempt+1} 次重试 ...")
+                else:
+                    # 如果出现其他错误，打印并重试
+                    print(f"[WARN] 执行失败，错误信息: {res.error_msg()}，第 {attempt+1} 次重试 ...")
+                
+            except Exception as e:
+                # 捕获所有传输异常或其他所有异常，打印错误信息并重试
+                print(f"[WARN] 异常: {str(e)}，第 {attempt+1} 次重试 ...")
+            
+            time.sleep(retry_interval)
         raise RuntimeError(f"[ERROR] 重试 {retries} 次后仍然失败: {nGQL}")
 
     def _ensure_space_exists(self):
@@ -369,13 +376,6 @@ class NebulaHandler:
             if values:
                 self._flush_entities(values, tag)
 
-    """ def _flush_entities(self, values: List[str], tag: str):
-        if tag == ENTITY_TAG:
-            nGQL = f'INSERT VERTEX `{ENTITY_TAG}`(name, description, type, chunkID) VALUES {",".join(values)};'
-        else:
-            nGQL = f'INSERT VERTEX `{tag}`(name, description, chunkID) VALUES {",".join(values)};'
-        self._exec(nGQL)
-        print(f"[Nebula] Bulk inserted {len(values)} entities into {tag}") """
     
     def _flush_entities(self, values: List[str], tag: str, retries: int = 5, retry_interval: float = 1.0):
         """批量插入实体"""
