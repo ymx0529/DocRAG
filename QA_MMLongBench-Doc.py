@@ -1,4 +1,4 @@
-import os
+import os 
 import sys
 import json
 import logging
@@ -6,7 +6,9 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer 
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent))
-
+import re
+import time
+from typing import Set, List
 from LLM.LLMclient import ChatModel
 from Database.joint import JointHandler
 from Database.nebula import NebulaHandler
@@ -18,29 +20,93 @@ from Generation.Generator import multimodal_generator
 from Generation.LLMJudge import judge_answer, score_answer
 from Logs.LoggerUtil import get_logger
 
+
+def parse_evidence_pages(evidence_field):
+    """
+    兼容 evidence_pages 的多种格式：
+      - [15, 16]
+      - "[19, 20]"
+      - "19,20"
+      - "19"
+    返回 set[int]
+    """
+    if evidence_field is None:
+        return set()
+    if isinstance(evidence_field, list):
+        try:
+            return set(int(x) for x in evidence_field)
+        except Exception:
+            s = json.dumps(evidence_field)
+            nums = re.findall(r'\d+', s)
+            return set(int(x) for x in nums)
+    if isinstance(evidence_field, str):
+        s = evidence_field.strip()
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return set(int(x) for x in parsed)
+            if isinstance(parsed, int):
+                return {parsed}
+        except Exception:
+            nums = re.findall(r'\d+', s)
+            return set(int(x) for x in nums)
+    try:
+        return {int(evidence_field)}
+    except Exception:
+        return set()
+
+
+def predicted_pages_from_chunks(chunks: dict):
+    """从 chunks 中提取预测页码集合"""
+    pages = set()
+    for d in ("text", "multimodal"):
+        for key in chunks.get(d, {}).keys():
+            if isinstance(key, (list, tuple)) and len(key) >= 1:
+                try:
+                    pages.add(int(key[0]))
+                except Exception:
+                    pass
+            elif isinstance(key, (int, float)):
+                pages.add(int(key))
+            elif isinstance(key, str):
+                m = re.search(r'\d+', key)
+                if m:
+                    pages.add(int(m.group()))
+    return pages
+
+
+def prf_from_sets(predicted: set, gold: set):
+    """计算 Precision / Recall / F1"""
+    if not predicted and not gold:
+        return 1.0, 1.0, 1.0
+    tp = len(predicted & gold)
+    fp = len(predicted - gold)
+    fn = len(gold - predicted)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    return precision, recall, f1
+
+
 ############################################# 系统配置 ###############################################
-# 指定显卡
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-# 配置日志
-log_dir = Path(__file__).parent / "Logs/Log1"    # 创建日志目录：当前文件同级的 logs 文件夹
+log_dir = Path(__file__).parent / "Logs/Log1"    
 logger = get_logger(log_dir=log_dir, backup_count=10)
 logging.info("\n------ 系统启动 ------\n")
 
+
 ########################################### 大模型API配置 ############################################
-"""阿里云 DashScope QWen 模型配置"""
 max_token_count = 32000
 model="qwen-plus" 
 tokenizer = "Qwen/Qwen3-4B-Instruct-2507"
 reasoning_model = False
 embedding_model = "Qwen/Qwen3-Embedding-0.6B"
 vl_model = "qwen-vl-plus"
-api_key="sk-8d2b5880bc254f7abfacbb08f0737a92"
-# api_key="sk-5e1abc2217e5450faaf791d260ed6074"
-# sk-5e1abc2217e5450faaf791d260ed6074
+api_key="sk-8d2b5880bc254f7abfacbb08f0737a92"   # 请替换
 base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+
 ##################################### 大模型client及数据库初始化 ######################################
-# 初始化 LLM 模型
 chatLLM = ChatModel(model=model,
                     reasoning_model=reasoning_model, 
                     api_key=api_key, 
@@ -53,7 +119,6 @@ chatVLM = ChatModel(model=vl_model,
                     temperature=1.0)
 encoder = SentenceTransformer(embedding_model)
 
-# 初始化向量数据库和图数据库工具
 SPACE = "mrag_sub1"
 joint = JointHandler(space_name=SPACE, 
                      nebula_host="127.0.0.1", nebula_port=9669, 
@@ -61,215 +126,242 @@ joint = JointHandler(space_name=SPACE,
                      collection_name="mrag_sub1")
 joint.setup(embedding_dim=encoder.get_sentence_embedding_dimension())
 
-############################################## 路径设置 ###############################################
-# 选择数据集
-dataset_name = "MMLongBench-Doc"
 
-# OCR 结果输出路径
+############################################## 路径设置 ###############################################
+dataset_name = "MMLongBench-Doc"
 ocr_dir = os.path.join(f"/home/hdd/MRAG/Dataset/{dataset_name}")
-# RAG 结果输出目录
 output_dir = os.path.join(f"Generation/Output")
 output_dataset_dir = os.path.join(f"Generation/Output/{dataset_name}")
 os.makedirs(output_dataset_dir, exist_ok=True)
-# RAG 评价结果输出目录
 rag_dir = os.path.join("Generation/Output", f"{dataset_name}_rag.json")
 os.makedirs(os.path.dirname(rag_dir), exist_ok=True)
 judge_dir = os.path.join("Generation/Output", f"{dataset_name}_judge.csv")
 
-######################################################################################################
-# 指定 QA json 文件路径。不同的数据集，需要指定不同的 json 文件路径和不同的处理方式。
 json_path = '/home/hdd/MRAG/Dataset/MMLongBench-Doc_samples.json'
 with open(json_path, 'r', encoding='utf-8') as f:
     data = json.load(f)
-# 提取所有 question 和 answer
+
+# ======== 修改点1：保留 evidence_pages，并做 -1 修正 =========
 doc_qa_dict = {}
 for item in data:
     pdf_name = item['doc_id']
     question = item['question']
     answer = item['answer']
+    evidence_field = item.get("evidence_pages", None)
+
+    gold_pages = parse_evidence_pages(evidence_field)
+    # 减1（因为 gold 是从 1 开始，而 OCR 预测是从 0 开始）
+    gold_pages = {p-1 for p in gold_pages if p > 0}
+
     if pdf_name.endswith(".pdf"):
-        pdf_name = pdf_name[:-4] # 这个数据集QAjson中文件名以.pdf结尾
+        pdf_name = pdf_name[:-4] 
     if pdf_name not in doc_qa_dict:
         doc_qa_dict[pdf_name] = []
 
     doc_qa_dict[pdf_name].append({
         "question": question,
-        "answer": answer
+        "answer": answer,
+        "gold_pages": gold_pages   # 保存
     })
-# 统计所有 question-answer 的总数
+
 total_qa_count = sum(len(v) for v in doc_qa_dict.values())
 print(f"doc_qa_dict 中总共有 {total_qa_count} 个 question-answer 对")
 
+
 ####################################################### 主流程 ########################################
-total_count = 0       # 总计数
-correct_count = 0     # 正确数
-score_sum = 0.0       # 总分数
-# 初始化结果列表
+total_count = 0       
+correct_count = 0     
+score_sum = 0.0       
+
 qa_data_list = []
-# 初始化结果统计 DataFrame
-results_df = pd.DataFrame(columns=["question", "answer", "response", "judgment", "score"])
+
+results_df = pd.DataFrame(columns=[
+    "question", "answer", "response", "judgment", "score",
+    "predicted_pages", "gold_pages", "precision", "recall", "f1"
+])
 
 for pdf_name, qa_list in doc_qa_dict.items():
-
-    # pdf_name = "4cbc46fc4b5a4a86cbe15ef28007d948"
-    # qa_list = doc_qa_dict[pdf_name]
-
     json_path_1 = f"/home/yuanxy/Experiment_yxy/GraphCache/{dataset_name}/FinalGraph/{pdf_name}_final_graph.json"
     json_path_2 = f"/home/yuanxy/Experiment_yxy/GraphCache/{dataset_name}/FinalGraph/{pdf_name}_final_graph_with_vector.json"
 
-    # 检查两个文件是否都存在
     if not (os.path.exists(json_path_1) and os.path.exists(json_path_2)):
-        print(f"⚠️ 跳过文档 {pdf_name}，原因：{json_path_1} 或 {json_path_2} 不存在")
         continue
 
-    # 加载第一个 JSON
     with open(json_path_1, 'r', encoding='utf-8') as f:
         final_graph = json.load(f)
-    print(f"--- 知识图谱载入，共包含 {len(final_graph)} 个元素 ---")
-
-    # 加载第二个 JSON
     with open(json_path_2, 'r', encoding='utf-8') as f:
         final_graph_with_vectors = json.load(f)
-    print(f"当前文档：{pdf_name} ---")
-    print(f"--- 知识图谱载入，共包含 {len(final_graph_with_vectors)} 个元素 ---")
 
-    # 实体向量写入向量数据
     joint.ingest_vector_data(final_graph_with_vectors)
-
-    # 写入图数据
-    # 批量遍历并处理description字段的换行符
     for item in final_graph_with_vectors:
         if 'description' in item:
             item['description'] = item['description'].replace('\n', ' ')
-    # 使用批量写入
     joint.ingest_graph_data_bulk(
         final_graph_with_vectors,
-        entity_batch=500,    # 每批最多 500 个实体
-        relation_batch=800,  # 每批最多 800 条关系
-        reset=True          # 如果 True 会清空并重建 space
+        entity_batch=500, relation_batch=800, reset=True
     )
 
-    node_count = joint.nebula.get_node_count()  # 获取节点数量
-    edge_count = joint.nebula.get_edge_count()  # 获取边数量
-    print(f"[Joint] 数据库中当前有 {node_count} 个节点和 {edge_count} 条边")
-
-    # 计算全图的 PageRank 和 Closeness 并导出到 CSV 文件
     nebula_handler = NebulaHandler(space_name=SPACE, host="127.0.0.1", port=9669, user="root", password="nebula")
     try:
-        # 用边权：use_edge_weight=True（前提是你的边有 relationship_strength 字段）
         pagerank, closeness = nebula_handler.compute_and_export_algorithms(
             pagerank_csv=os.path.join(output_dir, dataset_name, pdf_name+"_pagerank.csv"),
             closeness_csv=os.path.join(output_dir, dataset_name, pdf_name+"_closeness.csv"),
-            use_edge_weight=True,
-            closeness_undirected=True
+            use_edge_weight=True, closeness_undirected=True
         )
     finally:
         nebula_handler.close()
 
-    # 选择一个问题
     for qa in qa_list:
         question = qa['question']
         answer = qa['answer']
-        '''
-        根据问题检索
-        '''
-        # 问题为query
-        query = question
-        q_vector = encoder.encode(query, convert_to_tensor=False)  # 返回 numpy.ndarray
+        gold_pages = qa.get("gold_pages", set())
 
-        # 查询与问题最相似的 entityID
-        search_results = joint.search_neighbors_by_vector(q_vector.tolist(), top_k=5, partition=None)  # partition 可设置为 type 名称
-        # 获取与问题最相似的实体
+        # ======== 修改点2：如果 gold_pages 为空，跳过该 QA =========
+        if not gold_pages:
+            continue
+
+        # === RAG 检索流程 ===
+        query = question
+        q_vector = encoder.encode(query, convert_to_tensor=False)
+        search_results = joint.search_neighbors_by_vector(q_vector.tolist(), top_k=5, partition=None)
         results_matched = get_related_entities(entity_id=search_results, graph_data=final_graph)
 
-        # 调用 LLM 分析问题，并建议权重参数
-        rag_parameters = get_system_parameter(model=model, 
-                                              reasoning_model=reasoning_model, 
-                                              query=query, 
-                                              api_key=api_key, 
-                                              base_url=base_url)
-        # 从 LLM 响应中提取权重参数
-        parameters = extract_weights(rag_parameters)
-        alpha = parameters.get("alpha")
-        beta = parameters.get("beta")
-        lam = parameters.get("lam")
+        default_params = {"alpha": 0.4, "beta": 0.3, "lam": 0.3}
+        max_retries = 3
+        parameters = None
 
-        # 在子图中，计算每个 chunk 的排名 score(c)
-        scores_text, scores_multimodal = chunk_score(query=query, 
-                                                     graph_data=results_matched, 
-                                                     pagerank=pagerank, 
-                                                     closeness=closeness, 
-                                                     encoder_model=encoder, 
-                                                     alpha=alpha, 
-                                                     beta=beta, 
-                                                     lam=lam)
+        for attempt in range(max_retries):
+            try:
+                rag_parameters = get_system_parameter(
+                    model=model, reasoning_model=reasoning_model,
+                    query=query, api_key=api_key, base_url=base_url
+                )
+                if isinstance(rag_parameters, list) and rag_parameters:
+                    rag_parameters = rag_parameters[0]
+                if isinstance(rag_parameters, dict):
+                    parameters = extract_weights(rag_parameters)
+                    break
+            except Exception as e:
+                logging.warning(f"[{pdf_name}] 参数提取失败 (第 {attempt+1} 次): {e}")
+                time.sleep(1)
 
-        # 根据 score，选出 top_k 个 chunk
-        chunks = chunk_loader(ocr_json_path=Path(ocr_dir), 
-                              pdf_name=pdf_name, 
-                              scores_text=scores_text, 
-                              scores_multimodal=scores_multimodal, 
-                              top_k_text=7, 
-                              top_k_multimodal=5)
-        '''
-        生成回答以及提取关键信息
-        '''
-        # 将top_k个chunk的内容进行处理，提取image和text，连同query，一起输入视觉大模型，生成回答
+        if parameters is None:
+            parameters = default_params
+
+        alpha = parameters.get("alpha", default_params["alpha"])
+        beta  = parameters.get("beta",  default_params["beta"])
+        lam   = parameters.get("lam",   default_params["lam"])
+
+        scores_text, scores_multimodal = chunk_score(
+            query=query, graph_data=results_matched,
+            pagerank=pagerank, closeness=closeness,
+            encoder_model=encoder, alpha=alpha, beta=beta, lam=lam
+        )
+
+        chunks = chunk_loader(
+            ocr_json_path=Path(ocr_dir),
+            pdf_name=pdf_name,
+            scores_text=scores_text, scores_multimodal=scores_multimodal,
+            top_k_text=7, top_k_multimodal=5
+        )
+
+        pred_pages = predicted_pages_from_chunks(chunks)
+        precision, recall, f1 = prf_from_sets(pred_pages, gold_pages)
+
+        # === 输出每个问题的 pred_pages 和 gold_pages + 详细计算过程 ===
+        print(json.dumps({
+            "question": question,
+            "pred_pages": sorted(list(pred_pages)),
+            "gold_pages": sorted(list(gold_pages))
+        }, ensure_ascii=False))
+        tp = len(pred_pages & gold_pages)
+        fp = len(pred_pages - gold_pages)
+        fn = len(gold_pages - pred_pages)
+        print(f"计算过程: TP={tp}, FP={fp}, FN={fn} -> Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
+
+        # === 生成回答 ===
         ocr_imagefile_dir = os.path.join(ocr_dir, "cache", pdf_name, "auto")
-        prompt, image_list, response = multimodal_generator(query=query, 
-                                                            answer=answer, 
-                                                            chunks=chunks, 
-                                                            chatVLM=chatVLM, 
-                                                            ocr_imagefile_dir=Path(ocr_imagefile_dir), 
-                                                            save_dir=output_dataset_dir)
-        qa_data = {"query": query, 
-                   "prompt": prompt, 
-                   "image": image_list, 
-                   "response": response, 
-                   "answer": answer}
+        prompt, image_list, response = multimodal_generator(
+            query=query, answer=answer, chunks=chunks,
+            chatVLM=chatVLM, ocr_imagefile_dir=Path(ocr_imagefile_dir),
+            save_dir=output_dataset_dir
+        )
+
+        qa_data = {"query": query, "prompt": prompt, "image": image_list,
+                   "response": response, "answer": answer}
         qa_data_list.append(qa_data)
 
-        # 回答正确性判断
-        judgment = judge_answer(model=model, 
-                                reasoning_model=reasoning_model, 
-                                question=question, 
-                                reference_answer=answer, 
-                                response=response, 
-                                api_key=api_key, 
-                                base_url=base_url)
-        print(judgment)
-        if judgment.lower() in ["true", "false"]:
-            if judgment.lower() == "true":
-                correct_count += 1
+        judgment = judge_answer(model=model, reasoning_model=reasoning_model,
+                                question=question, reference_answer=answer,
+                                response=response, api_key=api_key, base_url=base_url)
+        if judgment.lower() == "true":
+            correct_count += 1
         total_count += 1
-        # 回答得分计算
-        score = score_answer(model=model, 
-                             reasoning_model=reasoning_model, 
-                             question=question, 
-                             reference_answer=answer, 
-                             response=response, 
-                             api_key=api_key, 
-                             base_url=base_url)
-        print(score)
+
+        score = score_answer(model=model, reasoning_model=reasoning_model,
+                             question=question, reference_answer=answer,
+                             response=response, api_key=api_key, base_url=base_url)
         try:
             score_value = float(score)
         except ValueError:
             score_value = 0.0
         score_sum += score_value
 
-        results_df.loc[len(results_df)] = [question, answer, response, judgment, score]
+        results_df.loc[len(results_df)] = [
+            question, answer, response, judgment, score,
+            list(pred_pages), list(gold_pages), precision, recall, f1
+        ]
 
-# 计算准确率和平均得分
-accuracy = correct_count / total_count
-average_score = score_sum / total_count
+
+# === 汇总指标 ===
+accuracy = correct_count / total_count if total_count > 0 else 0.0
+average_score = score_sum / total_count if total_count > 0 else 0.0
+
+total_tp = total_fp = total_fn = 0
+for _, row in results_df.iterrows():
+    pset = set(row["predicted_pages"])
+    gset = set(row["gold_pages"])
+    if not gset:
+        continue
+    total_tp += len(pset & gset)
+    total_fp += len(pset - gset)
+    total_fn += len(gset - pset)
+
+micro_prec = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+micro_rec  = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+micro_f1   = (2 * micro_prec * micro_rec / (micro_prec + micro_rec)) if (micro_prec + micro_rec) > 0 else 0.0
+
+macro_prec = results_df["precision"].mean() if not results_df.empty else 0.0
+macro_rec  = results_df["recall"].mean() if not results_df.empty else 0.0
+macro_f1   = results_df["f1"].mean() if not results_df.empty else 0.0
+
 logging.info(f"total_count: {total_count}")
-logging.info(f"correct_count: {correct_count}, Accuracy: {accuracy}")
-logging.info(f"score_sum: {score_sum}, Average Score: {average_score}")
+logging.info(f"correct_count: {correct_count}, Accuracy: {accuracy:.4f}")
+logging.info(f"score_sum: {score_sum}, Average Score: {average_score:.4f}")
+logging.info("页级评估结果：")
+logging.info(f"Micro Precision: {micro_prec:.4f}, Micro Recall: {micro_rec:.4f}, Micro F1: {micro_f1:.4f}")
+logging.info(f"Macro Precision: {macro_prec:.4f}, Macro Recall: {macro_rec:.4f}, Macro F1: {macro_f1:.4f}")
+logging.info("\n------ 任务结束 ------\n")
 
-# 保存结果到 CSV 文件
 results_df.to_csv(judge_dir, index=False, encoding="utf-8-sig")
-# 循环结束后，将所有 data 写入 JSON 文件
 with open(rag_dir, "w", encoding="utf-8") as f:
     json.dump(qa_data_list, f, ensure_ascii=False, indent=2)
 
-logging.info("\n------ 任务结束 ------\n")
+metrics_summary = {
+    "total_count": total_count,
+    "correct_count": correct_count,
+    "accuracy": accuracy,
+    "average_score": average_score,
+    "micro_precision": micro_prec,
+    "micro_recall": micro_rec,
+    "micro_f1": micro_f1,
+    "macro_precision": macro_prec,
+    "macro_recall": macro_rec,
+    "macro_f1": macro_f1
+}
+metrics_path = os.path.join(output_dataset_dir, f"{dataset_name}_metrics.json")
+with open(metrics_path, "w", encoding="utf-8") as f:
+    json.dump(metrics_summary, f, ensure_ascii=False, indent=2)
+
+logging.info(f"📊 指标已保存到 {metrics_path}")
+joint.close()

@@ -262,3 +262,4 @@ with open(rag_dir, "w", encoding="utf-8") as f:
     json.dump(qa_data_list, f, ensure_ascii=False, indent=2)
 
 logging.info("\n------ 任务结束 ------\n")
+joint.close()
