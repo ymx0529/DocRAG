@@ -88,7 +88,7 @@ def parsed_document_process(pdf_name: str,
         print("{} 文档加载成功，共加载了 {} 页".format(latest_file, len(pages)))
         logging.info("{} 文档加载成功，共加载了 {} 页".format(latest_file, len(pages)))
 
-                # 提取第一个非空页和前三个非空页的 "text" 字段内容
+        # 提取第一个非空页和前三个非空页的 "text" 字段内容
         text_list_1stPage = []
         text_list_3Page = []
 
@@ -97,10 +97,10 @@ def parsed_document_process(pdf_name: str,
             text_list_page = [item["text"] for item in items if "text" in item and item["text"].strip()]
             if text_list_page:  # 非空才加入
                 non_empty_pages.append((page_num, text_list_page))
-
+                
         # 取第一个非空页
         if non_empty_pages:
-            text_list_1stPage = non_empty_pages[0][1]
+            text_list_1stPage = non_empty_pages[0]
         else:
             logging.error("文档没有任何可处理的文本内容")
             return []
@@ -112,7 +112,6 @@ def parsed_document_process(pdf_name: str,
         if not text_list_3Page:
             logging.error("前三个非空页没有可处理的文本内容")
             return []
-
 
         # 用前三页内容，提取 领域 语言，并为LLM设定系统角色
         domain = generate_domain(chat_model=chatLLM, docs=text_list_3Page)
@@ -207,7 +206,7 @@ def parsed_document_process(pdf_name: str,
                             extraction_result = entity_relationship_extraction(chat_model=chatLLM,
                                                                                 persona=persona,
                                                                                 extract_prompt=prompt,
-                                                                                max_retries=5)
+                                                                                max_retries=10)
                             if extraction_result:
                                 # 附上 ID 成为图片三元组
                                 image_triplet = create_id_and_embedding(extraction_result, page_idx, segment_idx, 
@@ -272,7 +271,7 @@ def parsed_document_process(pdf_name: str,
                             extraction_result = entity_relationship_extraction(chat_model=chatLLM,
                                                                                 persona=persona,
                                                                                 extract_prompt=prompt,
-                                                                                max_retries=5)
+                                                                                max_retries=10)
                             if extraction_result:
                                 # 附上 ID 成为 表格标题脚注 段落三元组
                                 table_triplet = create_id_and_embedding(extraction_result, page_idx, segment_idx, 
@@ -443,7 +442,7 @@ def parsed_document_process_recovery(pdf_name: str,
                         extraction_result = entity_relationship_extraction(chat_model=chatLLM, 
                                                                            persona=persona, 
                                                                            extract_prompt=prompt, 
-                                                                           max_retries=5)
+                                                                           max_retries=10)
                         # 2.如果抽取成功，给每个都附上 ID，成为段落级子图
                         if extraction_result:
                             text_triplet = create_id_and_embedding(extraction_result, page_idx, segment_idx, 
@@ -476,7 +475,7 @@ def parsed_document_process_recovery(pdf_name: str,
                             extraction_result = entity_relationship_extraction(chat_model=chatLLM, 
                                                                                persona=persona, 
                                                                                extract_prompt=prompt, 
-                                                                               max_retries=5)
+                                                                               max_retries=10)
                             if extraction_result:
                                 # 附上 ID 成为图片三元组
                                 image_triplet = create_id_and_embedding(extraction_result, page_idx, segment_idx, 
@@ -542,7 +541,7 @@ def parsed_document_process_recovery(pdf_name: str,
                             extraction_result = entity_relationship_extraction(chat_model=chatLLM, 
                                                                                persona=persona, 
                                                                                extract_prompt=prompt, 
-                                                                               max_retries=5)
+                                                                               max_retries=10)
                             if extraction_result:
                                 # 附上 ID 成为 表格标题脚注 段落三元组
                                 table_triplet = create_id_and_embedding(extraction_result, page_idx, segment_idx, 
