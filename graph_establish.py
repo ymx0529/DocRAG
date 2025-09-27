@@ -57,10 +57,13 @@ encoder = SentenceTransformer(embedding_model)
 
 ######################################################################################################
 
+# HDD 数据集目录
+dataset_dir = Path("/home/hdd/MRAG/Dataset")
 # 选择数据集
-dataset_name = "TAT-DQA"
+# dataset_name = "TAT-DQA"
+dataset_name = "MMLongBench-Doc"
 # 读取文件名列表
-df = pd.read_csv("TAT-DQA_folders.csv")
+df = pd.read_csv("MMLongBench-Doc.csv")
 
 # 取出前 100 个文件夹名
 folder_name = df["folder_name"].iloc[:100].tolist()
@@ -69,12 +72,13 @@ for i in range(len(folder_name)):
 
     # 目标 PDF 文档名称
     pdf_name = folder_name[i]
+    pdf_name = "2305.14160v4"
     print(pdf_name)
 
     # OCR 结果输出路径
-    ocr_dir = os.path.join("Dataset", dataset_name)
+    ocr_dir = os.path.join(dataset_dir, dataset_name)
     # OCR 图片输出路径
-    ocr_imagefile_dir = os.path.join("Dataset", dataset_name, "cache", pdf_name, "auto")
+    ocr_imagefile_dir = os.path.join(dataset_dir, dataset_name, "cache", pdf_name, "auto")
 
     '''
     文档内容读取与建图
