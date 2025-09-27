@@ -5,7 +5,7 @@
 /GraphCache/TAT-DQA
 
 # 忽略所有 .pyc 文件
- __pycache__/ 
+__pycache__/
 *.pyc
 
 # 忽略 Logs 下的所有文件

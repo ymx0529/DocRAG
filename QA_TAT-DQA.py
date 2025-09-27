@@ -13,10 +13,10 @@ from Database.nebula import NebulaHandler
 from Retrieval.ChunkRetriever import get_related_entities
 from Retrieval.ChunkRetriever import chunk_loader
 from Retrieval.RelevanceScore import chunk_score
+from Retrieval.SystemParameter import get_system_parameter, extract_weights
 from Generation.Generator import multimodal_generator
 from Generation.LLMJudge import judge_answer, score_answer
 from Logs.LoggerUtil import get_logger
-
 
 ############################################# 系统配置 ###############################################
 # 指定显卡
@@ -43,11 +43,13 @@ base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
 chatLLM = ChatModel(model=model,
                     reasoning_model=reasoning_model, 
                     api_key=api_key, 
-                    base_url=base_url)
+                    base_url=base_url, 
+                    temperature=1.0)
 chatVLM = ChatModel(model=vl_model, 
                     reasoning_model=False, 
                     api_key=api_key, 
-                    base_url=base_url)
+                    base_url=base_url,
+                    temperature=1.0)
 encoder = SentenceTransformer(embedding_model)
 
 # 初始化向量数据库和图数据库工具
@@ -63,16 +65,19 @@ joint.setup(embedding_dim=encoder.get_sentence_embedding_dimension())
 dataset_name = "TAT-DQA"
 
 # OCR 结果输出路径
-ocr_dir = os.path.join(f"Dataset/{dataset_name}")
+ocr_dir = os.path.join(f"/home/hdd/MRAG/Dataset/{dataset_name}")
 # RAG 结果输出目录
-output_dir = os.path.join("Generation/Output")
+output_dir = os.path.join(f"Generation/Output")
+output_dataset_dir = os.path.join(f"Generation/Output/{dataset_name}")
+os.makedirs(output_dataset_dir, exist_ok=True)
 # RAG 评价结果输出目录
+rag_dir = os.path.join("Generation/Output", f"{dataset_name}_rag.json")
+os.makedirs(os.path.dirname(rag_dir), exist_ok=True)
 judge_dir = os.path.join("Generation/Output", f"{dataset_name}_judge.csv")
 
 ######################################################################################################
-
 # 指定 QA json 文件路径。不同的数据集，需要指定不同的 json 文件路径和不同的处理方式。
-json_path = './Dataset/tatdqa_dataset_test_gold.json'
+json_path = '/home/hdd/MRAG/Dataset/tatdqa_dataset_test_gold.json'
 with open(json_path, 'r', encoding='utf-8') as f:
     data = json.load(f)
 # 提取所有 question 和 answer
@@ -96,13 +101,15 @@ print(f"doc_qa_dict 中总共有 {total_qa_count} 个 question-answer 对")
 total_count = 0       # 总计数
 correct_count = 0     # 正确数
 score_sum = 0.0       # 总分数
+# 初始化结果列表
+qa_data_list = []
 # 初始化结果统计 DataFrame
 results_df = pd.DataFrame(columns=["question", "answer", "response", "judgment", "score"])
 
 for pdf_name, qa_list in doc_qa_dict.items():
 
-# pdf_name = "4cbc46fc4b5a4a86cbe15ef28007d948"
-# qa_list = doc_qa_dict[pdf_name]
+    # pdf_name = "4cbc46fc4b5a4a86cbe15ef28007d948"
+    # qa_list = doc_qa_dict[pdf_name]
 
     json_path = f"./GraphCache/{dataset_name}/FinalGraph/{pdf_name}_final_graph.json"
     with open(json_path, 'r', encoding='utf-8') as f:
@@ -123,7 +130,6 @@ for pdf_name, qa_list in doc_qa_dict.items():
     for item in final_graph_with_vectors:
         if 'description' in item:
             item['description'] = item['description'].replace('\n', ' ')
-    #joint.ingest_graph_data(final_graph_with_vectors)
     # 使用批量写入
     joint.ingest_graph_data_bulk(
         final_graph,
@@ -136,14 +142,13 @@ for pdf_name, qa_list in doc_qa_dict.items():
     edge_count = joint.nebula.get_edge_count()  # 获取边数量
     print(f"[Joint] 数据库中当前有 {node_count} 个节点和 {edge_count} 条边")
 
-
     # 计算全图的 PageRank 和 Closeness 并导出到 CSV 文件
     nebula_handler = NebulaHandler(space_name=SPACE, host="127.0.0.1", port=9669, user="root", password="nebula")
     try:
         # 用边权：use_edge_weight=True（前提是你的边有 relationship_strength 字段）
         pagerank, closeness = nebula_handler.compute_and_export_algorithms(
-            pagerank_csv=os.path.join(output_dir, pdf_name + "_pagerank.csv"),
-            closeness_csv=os.path.join(output_dir, pdf_name + "_closeness.csv"),
+            pagerank_csv=os.path.join(output_dir, dataset_name, pdf_name+"_pagerank.csv"),
+            closeness_csv=os.path.join(output_dir, dataset_name, pdf_name+"_closeness.csv"),
             use_edge_weight=True,
             closeness_undirected=True
         )
@@ -154,10 +159,6 @@ for pdf_name, qa_list in doc_qa_dict.items():
     for qa in qa_list:
         question = qa['question']
         answer = qa['answer']
-        print(f"--- 文档：{pdf_name} ---")
-        print(f"--- 问题：{question} ---")
-        print(f"--- 答案：{answer} ---")
-
         '''
         根据问题检索
         '''
@@ -170,37 +171,52 @@ for pdf_name, qa_list in doc_qa_dict.items():
         # 获取与问题最相似的实体
         results_matched = get_related_entities(entity_id=search_results, graph_data=final_graph)
 
-        # 4.在子图中，计算每个 chunk 的排名 score(c)
-        scores_text, scores_multimodal = chunk_score(query=query, 
-                                                        graph_data=results_matched, 
-                                                        pagerank=pagerank, 
-                                                        closeness=closeness, 
-                                                        encoder_model=encoder, 
-                                                        alpha=1.0, 
-                                                        beta=1.0, 
-                                                        gamma=1.0, 
-                                                        delta=1.0, 
-                                                        lam=0.5)
+        # 调用 LLM 分析问题，并建议权重参数
+        rag_parameters = get_system_parameter(model=model, 
+                                              reasoning_model=reasoning_model, 
+                                              query=query, 
+                                              api_key=api_key, 
+                                              base_url=base_url)
+        # 从 LLM 响应中提取权重参数
+        parameters = extract_weights(rag_parameters)
+        alpha = parameters.get("alpha")
+        beta = parameters.get("beta")
+        lam = parameters.get("lam")
 
-        # 5.根据 score，选出 top_k 个 chunk
+        # 在子图中，计算每个 chunk 的排名 score(c)
+        scores_text, scores_multimodal = chunk_score(query=query, 
+                                                     graph_data=results_matched, 
+                                                     pagerank=pagerank, 
+                                                     closeness=closeness, 
+                                                     encoder_model=encoder, 
+                                                     alpha=alpha, 
+                                                     beta=beta, 
+                                                     lam=lam)
+
+        # 根据 score，选出 top_k 个 chunk
         chunks = chunk_loader(ocr_json_path=Path(ocr_dir), 
-                                pdf_name=pdf_name,
-                                scores_text=scores_text, 
-                                scores_multimodal=scores_multimodal, 
-                                top_k_text=5,
-                                top_k_multimodal=3)
+                              pdf_name=pdf_name, 
+                              scores_text=scores_text, 
+                              scores_multimodal=scores_multimodal, 
+                              top_k_text=5, 
+                              top_k_multimodal=3)
         '''
         生成回答以及提取关键信息
         '''
         # 将top_k个chunk的内容进行处理，提取image和text，连同query，一起输入视觉大模型，生成回答
         ocr_imagefile_dir = os.path.join(ocr_dir, "cache", pdf_name, "auto")
-        response = multimodal_generator(query=query, 
-                                        answer=answer,
-                                        chunks=chunks,
-                                        chatVLM=chatVLM,
-                                        ocr_imagefile_dir=Path(ocr_imagefile_dir), 
-                                        save_dir=output_dir)
-        print(response)
+        prompt, image_list, response = multimodal_generator(query=query, 
+                                                            answer=answer, 
+                                                            chunks=chunks, 
+                                                            chatVLM=chatVLM, 
+                                                            ocr_imagefile_dir=Path(ocr_imagefile_dir), 
+                                                            save_dir=output_dataset_dir)
+        qa_data = {"query": query, 
+                   "prompt": prompt, 
+                   "image": image_list, 
+                   "response": response, 
+                   "answer": answer}
+        qa_data_list.append(qa_data)
 
         # 回答正确性判断
         judgment = judge_answer(model=model, 
@@ -217,12 +233,12 @@ for pdf_name, qa_list in doc_qa_dict.items():
         total_count += 1
         # 回答得分计算
         score = score_answer(model=model, 
-                                reasoning_model=reasoning_model,
-                                question=question,
-                                reference_answer=answer,
-                                response=response,
-                                api_key=api_key,
-                                base_url=base_url)
+                             reasoning_model=reasoning_model, 
+                             question=question, 
+                             reference_answer=answer, 
+                             response=response, 
+                             api_key=api_key, 
+                             base_url=base_url)
         print(score)
         try:
             score_value = float(score)
@@ -241,3 +257,9 @@ logging.info(f"score_sum: {score_sum}, Average Score: {average_score}")
 
 # 保存结果到 CSV 文件
 results_df.to_csv(judge_dir, index=False, encoding="utf-8-sig")
+# 循环结束后，将所有 data 写入 JSON 文件
+with open(rag_dir, "w", encoding="utf-8") as f:
+    json.dump(qa_data_list, f, ensure_ascii=False, indent=2)
+
+logging.info("\n------ 任务结束 ------\n")
+joint.close()

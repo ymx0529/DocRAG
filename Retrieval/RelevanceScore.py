@@ -127,8 +127,7 @@ def _load_closeness_dict(csv_file_path: str) -> dict:
 
 def _relevance_score(similarities: dict, 
                      chunk_entities: dict, 
-                     alpha: float, 
-                     beta: float, 
+                     alpha: float
                      ) -> dict:
     """
     计算每个 chunk 对应的节点的相似度数值和，和节点数量，并转换为概率值，
@@ -137,8 +136,7 @@ def _relevance_score(similarities: dict,
     参数:
         similarities: {entityID(str): similarity_score(float)}
         chunk_entities: {chunkID(tuple): [entityID(str), ...]} 每个chunk包含的entity
-        alpha: 相似度的权重
-        beta: 节点数量奖励的权重
+        alpha: 相似度和节点数量奖励的权重, 取值范围 [0, 1]
     返回:
         {chunkID(tuple): score(float)}
     """
@@ -152,17 +150,11 @@ def _relevance_score(similarities: dict,
 
     # 归一化为和为1的概率值
     total1 = sum(sim_scores.values())
-    if total1 > 0:
-        similarities_prob = {node: val / total1 for node, val in sim_scores.items()}
-    else:
-        similarities_prob = {node: 0.0 for node in sim_scores.keys()}
+    similarities_prob = {node: val/total1 for node, val in sim_scores.items()}
     total2 = sum(num_socres.values())
-    if total2 > 0:
-        chunk_entities_prob = {node: val / total2 for node, val in num_socres.items()}
-    else:
-        chunk_entities_prob = {node: 0.0 for node in num_socres.keys()}
+    chunk_entities_prob = {node: val/total2 for node, val in num_socres.items()}
 
-    chunk_scores = {node: alpha * similarities_prob.get(node, 0.0) + beta * chunk_entities_prob.get(node, 0.0)
+    chunk_scores = {node: alpha * similarities_prob.get(node, 0.0) + (1-alpha) * chunk_entities_prob.get(node, 0.0)
                     for node in sim_scores.keys()}
 
     return chunk_scores
@@ -170,8 +162,7 @@ def _relevance_score(similarities: dict,
 def _structure_score(pagerank_dict: dict, 
                      closeness_dict: dict, 
                      chunk_entities: dict, 
-                     gamma: float, 
-                     delta: float
+                     beta: float
                      ) -> dict:
     """
     根据每个 chunk 对应节点的 PageRank 值和 Closeness Centrality 值，
@@ -179,15 +170,13 @@ def _structure_score(pagerank_dict: dict,
     参数:
         pagerank_dict: {entityID(str): pagerank(float)}
         closeness_dict: {entityID(str): closeness(float)}
+        chunk_entities: {chunkID(tuple): [entityID(str),...]} 每个chunk包含的entity
+        beta: PageRank 和 Closeness Centrality 奖励的权重, 取值范围 [0, 1]
     """
     
     # closeness 值归一化为和为1的概率值，和 pagerank 归一到同一量级
     total = sum(closeness_dict.values())
-    if total == 0:
-        print("[WARN] closeness_dict 全部为 0 或为空，跳过归一化")
-        closeness_prob_dict = {node: 0.0 for node in closeness_dict}
-    else:
-        closeness_prob_dict = {node: val / total for node, val in closeness_dict.items()}
+    closeness_prob_dict = {node: val/total for node, val in closeness_dict.items()}
 
     chunk_scores = {}
     for chunk_id, entity_list in chunk_entities.items():
@@ -195,7 +184,7 @@ def _structure_score(pagerank_dict: dict,
         for eid in entity_list:
             pagerank = pagerank_dict.get(eid, 0.0)   # 没有则视为0
             closeness = closeness_prob_dict.get(eid, 0.0)    # 没有则视为0
-            total += gamma * pagerank + delta * closeness
+            total += beta * pagerank + (1-beta) * closeness
         chunk_scores[chunk_id] = total
 
     return chunk_scores
@@ -229,10 +218,8 @@ def chunk_score(query: str,
                 pagerank: dict | str,   # 允许传 dict / str(csv路径) / None
                 closeness: dict | str, 
                 encoder_model: SentenceTransformer, 
-                alpha=1.0, 
-                beta=1.0, 
-                gamma=1.0, 
-                delta=1.0, 
+                alpha=0.5, 
+                beta=0.5,  
                 lam=0.5
                 )-> tuple[dict, dict]:
     """
@@ -245,7 +232,7 @@ def chunk_score(query: str,
         encoder_model: 编码模型 用于获取语义向量
         alpha: 相关性权重
         beta: 全图重要性权重
-        gamma: 节点数量奖励权重
+        lam: 综合权重
     返回:
         {chunkID(tuple): score(float)}, 
         {chunkID(tuple): score(float)}
@@ -272,11 +259,13 @@ def chunk_score(query: str,
         closeness_dict = {}
 
     # 5. 计算 chunk 的 relevance score
-    relevance_scores_text = _relevance_score(similarities, text_chunk_entities, alpha, beta)
-    relevance_scores_multimodal = _relevance_score(similarities, multimodal_chunk_entities, alpha, beta)
+    relevance_scores_text = _relevance_score(similarities, text_chunk_entities, alpha)
+    relevance_scores_multimodal = _relevance_score(similarities, multimodal_chunk_entities, alpha)
+
     # 6. 计算 chunk 的 structure score
-    structure_scores_text = _structure_score(pagerank_dict, closeness_dict, text_chunk_entities, gamma, delta)
-    structure_scores_multimodal = _structure_score(pagerank_dict, closeness_dict, multimodal_chunk_entities, gamma, delta)
+    structure_scores_text = _structure_score(pagerank_dict, closeness_dict, text_chunk_entities, beta)
+    structure_scores_multimodal = _structure_score(pagerank_dict, closeness_dict, multimodal_chunk_entities, beta)
+
     # 7. 综合排序
     scores_text = _rank_scores(relevance_scores_text, structure_scores_text, lam)
     scores_multimodal = _rank_scores(relevance_scores_multimodal, structure_scores_multimodal, lam)
