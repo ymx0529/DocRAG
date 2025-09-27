@@ -308,8 +308,8 @@ def parsed_document_process(pdf_name: str,
                         text_list = merged_text + [table_body] + [table_image_description]
 
                     # 创建本段的锚节点，与本段以及上一段的锚节点建立 anchor_edge
-                    anchor_node = create_anchor_node(pdf_name=pdf_name, segment_text=text_list, 
-                                                     page_idx=page_idx, segment_idx=segment_idx, chatLLM=chatLLM)
+                    anchor_node = create_anchor_node(pdf_name=pdf_name, segment_text=text_list, page_idx=page_idx, 
+                                                     segment_idx=segment_idx, chatLLM=chatLLM, encoder=encoder)
                     anchor_edge = create_anchor_edge(pdf_name=pdf_name, 
                                                      source_triplet=subgraph_seg, 
                                                      target_triplet=anchor_node, 

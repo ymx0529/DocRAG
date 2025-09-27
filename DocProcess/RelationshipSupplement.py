@@ -59,7 +59,8 @@ def create_anchor_node(pdf_name: str,
                        segment_text: str | list[str], 
                        page_idx: int, 
                        segment_idx: int, 
-                       chatLLM: ChatModel
+                       chatLLM: ChatModel, 
+                       encoder: SentenceTransformer
                        ) -> list:
     """
     创建一个段落的锚节点的字典列表。
@@ -88,14 +89,18 @@ def create_anchor_node(pdf_name: str,
     else:
         description = "Anchor node used to index contextual paragraphs"
 
-    return [{
+    anchor_node = {
         "name": f"segment anchor node for page {page_idx}, segment {segment_idx}",
         "type": "SEGMENT ANCHOR NODE",
         "description": description,
         "entityID": str([page_idx, segment_idx, "anchor"]), 
         "chunkID": str([[page_idx, segment_idx]]), 
         "ref_doc_id": pdf_name
-    }]
+    }
+    # 使用段落的 description 来为anchor_node本身生成向量
+    anchor_node["vector"] = encoder.encode(description).tolist()
+
+    return [anchor_node]
 
 def create_anchor_edge(pdf_name, 
                        source_triplet: List[Dict], 
